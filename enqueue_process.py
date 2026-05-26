@@ -1,20 +1,23 @@
-#!/home/c3hod/pyproj/process_queue/.process_queue/bin/python
+#!/home/c3hod/python/process_queue/.queue/bin/python
 import requests
 import argparse
+from dotenv import load_dotenv
+import os
 
-def make_request(filename):
-    url = "http://localhost:8000/add_task/"
+def make_request(url, filename):
+    url = f"{url}/add_task/"
     data = {"filename": filename}
     response = requests.post(url, json = data)
     print(f'Status Code: {response.status_code}\n Response JSON: {response.json()}')
     
-
 def main():
     parser = argparse.ArgumentParser(description = 'FiFo Task Script')
     parser.add_argument("--filename", type = str, required = True )
     args = parser.parse_args()
-
-    make_request(args.filename)
+    
+    load_dotenv()
+    URL = os.getenv('URL')
+    make_request(URL, args.filename)
 
 if __name__ == "__main__":
     main()

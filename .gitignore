@@ -1,2 +1,5 @@
 __pycache__
 .process_queue/
+.queue/
+queue_system.log
+test.py
