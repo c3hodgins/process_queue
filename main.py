@@ -10,18 +10,30 @@ import logging
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
 async def worker(state):
+    '''
+        Persistent worker which asyncrhonously enqueues tasks to the queue without race condition
+    '''
+    
     logger = logging.getLogger("queue_worker")
-    state.isbusy = True
 
-    while state.queue.head is not None:
+    while True:
+        state.queue_event.clear()
+        while state.queue.head is None:
+            state.isbusy = False
+            logger.info(f'Task Queue is Empty. Worker Going to Sleep')
+            await state.queue_event.wait()
+            state.queue_event.clear()
+        
+        state.isbusy = True
         node = state.queue.pop()
         filename = node.process_name
         logger.info(f'Executing Script:{filename}')
+        
         try:
             process = await asyncio.create_subprocess_exec(
                 state.python_path,
                 filename, stdout = asyncio.subprocess.PIPE, stdin = asyncio.subprocess.PIPE)
-            print(f'Starting {filename} at {datetime.now()}')
+            logger.info(f'Starting {filename} at {datetime.now()}')
             stdout, stderr = await process.communicate()
 
             if process.returncode == 0:
@@ -37,8 +49,6 @@ async def worker(state):
             logger.exception(
                 f"Unexpected exception during execution of {filename}: {e}"
             )
-    state.isbusy = False
-    logger.info("Task queue is empty. Worker going to sleep.")
 
 
 @asynccontextmanager
@@ -61,9 +71,14 @@ async def lifespan(app: FastAPI):
     app.state.python_path = python_path
     app.state.queue = TaskQueue()
     app.state.isbusy = False
+    app.state.queue_event = asyncio.Event()
+    
+    main_worker = asyncio.create_task(worker(app.state))
+    
     yield
     
     main_logger.info("FastAPI Python Task Queue Server Shutting Down...")
+    main_worker.cancel()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -71,18 +86,17 @@ app = FastAPI(lifespan=lifespan)
 async def add_task_to_queue(request: Request, data: dict):
     logger = logging.getLogger("queue_app")
     filename = data.get('filename')
+    
     if os.path.exists(filename):
         request.app.state.queue.push(QueueNode(filename))
         logger.info(f'Enqueued new script: {filename}')
         request.app.state.queue.dump()
+        was_busy = request.app.state.isbusy
+        request.app.state.queue_event.set()
 
-        if not request.app.state.isbusy:
-            logger.info("Worker is idle. Spawning background task.")
-            asyncio.create_task(worker(request.app.state))
+        if not was_busy:
             return {"status": "executing"}
-        
-        logger.info("Worker is busy. Task will stay in FIFO order.")
-        return {"status":"queued"}
+        return {"status": "queued"}
     else:
         logger.warning(f"Rejected task submission. File does not exist: {filename}")
         return {"Error": "File DNE"}
