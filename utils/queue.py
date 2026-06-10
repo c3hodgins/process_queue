@@ -1,10 +1,11 @@
 from datetime import datetime
 
 class QueueNode():
-    def __init__(self, filename):
+    def __init__(self, filename, file_text):
         if filename != "DUMMY" or filename != "HEAD":
             self.next = None
             self.process_name = filename
+            self.file_bytes = file_text
             self.start_time = datetime.now()
         
     def dump(self):

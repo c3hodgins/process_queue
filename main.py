@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File
 from contextlib import asynccontextmanager
 from utils.queue import TaskQueue, QueueNode
 from datetime import datetime
@@ -15,7 +15,7 @@ async def worker(state):
     '''
     
     logger = logging.getLogger("queue_worker")
-
+    
     while True:
         state.queue_event.clear()
         while state.queue.head is None:
@@ -27,12 +27,15 @@ async def worker(state):
         state.isbusy = True
         node = state.queue.pop()
         filename = node.process_name
+        script_text = node.file_bytes.decode('utf-8')
+        logger.info(script_text)
+        with open('temp.py', 'w', encoding='utf-8') as f:
+            f.write(script_text)
         logger.info(f'Executing Script:{filename}')
-        
         try:
             process = await asyncio.create_subprocess_exec(
                 state.python_path,
-                filename, stdout = asyncio.subprocess.PIPE, stdin = asyncio.subprocess.PIPE)
+                'temp.py', stdout = asyncio.subprocess.PIPE, stdin = asyncio.subprocess.PIPE)
             logger.info(f'Starting {filename} at {datetime.now()}')
             stdout, stderr = await process.communicate()
 
@@ -83,23 +86,21 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 @app.post("/add_task/")
-async def add_task_to_queue(request: Request, data: dict):
+async def add_task_to_queue(request: Request, file: UploadFile = File(...)):
     logger = logging.getLogger("queue_app")
-    filename = data.get('filename')
+    print(file.filename)
+    filename = file.filename
+    file_bytes = await file.read()
     
-    if os.path.exists(filename):
-        request.app.state.queue.push(QueueNode(filename))
-        logger.info(f'Enqueued new script: {filename}')
-        request.app.state.queue.dump()
-        was_busy = request.app.state.isbusy
-        request.app.state.queue_event.set()
+    request.app.state.queue.push(QueueNode(filename, file_bytes))
+    logger.info(f'Enqueued new script: {filename}')
+    request.app.state.queue.dump()
+    was_busy = request.app.state.isbusy
+    request.app.state.queue_event.set()
 
-        if not was_busy:
-            return {"status": "executing"}
-        return {"status": "queued"}
-    else:
-        logger.warning(f"Rejected task submission. File does not exist: {filename}")
-        return {"Error": "File DNE"}
+    if not was_busy:
+        return {"status": "executing"}
+    return {"status": "queued"}
 
 @app.get("/queue_length")
 async def get_queue_length(request: Request):

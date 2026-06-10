@@ -1,5 +1,8 @@
 __pycache__
 .process_queue/
 .queue/
+.env
+.dockerignore
+temp.py
 queue_system.log
 test.py
